@@ -1,39 +1,13 @@
 {
   "name": "TCP Connector Example",
   "type": "TCP",
-  "address": "127.0.0.1",
-  "port": 50000,
+  "address": "0.0.0.0",
+  "port": 20002,
   "bufferSize": 1024,
-  "devices": [
+  "templates": [
     {
-      "address": "127.0.0.1:50001",
-      "deviceName": "Device Example",
-      "deviceType": "default",
-      "encoding": "utf-8",
-      "telemetry": [
-        {
-          "key": "temp",
-          "byteFrom": 0,
-          "byteTo": -1
-        },
-        {
-          "key": "hum",
-          "byteFrom": 0,
-          "byteTo": 2
-        }
-      ],
-      "attributes": [
-        {
-          "key": "name",
-          "byteFrom": 0,
-          "byteTo": -1
-        },
-        {
-          "key": "num",
-          "byteFrom": 2,
-          "byteTo": 4
-        }
-      ],
+      "address": "*:*",
+      "template": "Global",
       "attributeRequests": [
         {
           "type": "shared",
@@ -43,13 +17,13 @@
       ],
       "attributeUpdates": [
         {
-          "encoding": "utf-16",
-          "attributeOnThingsBoard": "sharedName"
+          "encoding": "utf-8",
+          "attributeOnThingsBoard": "status"
         }
       ],
       "serverSideRpc": [
         {
-          "methodRPC": "rpcMethod1",
+          "methodRPC": "turn_on",
           "withResponse": true,
           "methodProcessing": "write",
           "encoding": "utf-8"

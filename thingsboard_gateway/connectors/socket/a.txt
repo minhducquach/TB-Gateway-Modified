@@ -1,0 +1,6 @@
+(address:port,data) -> filter(data) de biet convert nao -> converter((address:port,data)) -> store: {"name": "ABC", "address": "address:port", "converter": instance} -> dict_result up len thingboard
+
+
+{
+    "id" : "192.1.1.1:9000"
+}

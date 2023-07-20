@@ -1174,6 +1174,7 @@ class TBGatewayService:
         self.send_rpc_reply(device=content["device"], req_id=content["data"]["id"], success_sent=False)
 
     def _attribute_update_callback(self, content, *args):
+        print("ATT Callback")
         log.debug("Attribute request received with content: \"%s\"", content)
         log.debug(args)
         if content.get('device') is not None:

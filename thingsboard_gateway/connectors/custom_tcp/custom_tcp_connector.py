@@ -17,14 +17,9 @@ from queue import Queue
 from random import choice
 from re import findall
 from string import ascii_lowercase
-from tarfile import data_filter
 from threading import Thread
 from time import sleep
-import time
-import requests
-import threading
 
-from simplejson import dumps
 import json
 
 from thingsboard_gateway.connectors.connector import Connector, log
@@ -32,57 +27,14 @@ from thingsboard_gateway.tb_utility.tb_loader import TBModuleLoader
 from thingsboard_gateway.gateway.statistics_service import StatisticsService
 from thingsboard_gateway.connectors.socket.socket_decorators import CustomCollectStatistics
 
-from thingsboard_gateway.connectors.socket.bytes_socket_uplink_converter import BytesSocketUplinkConverter
-
 SOCKET_TYPE = {
     'TCP': socket.SOCK_STREAM,
     'UDP': socket.SOCK_DGRAM
 }
 DEFAULT_UPLINK_CONVERTER = 'BytesSocketUplinkConverter'
 
-def get_device_id_by_name(deviceName):
-    token_res = requests.post("http://192.168.1.226:2680/api/auth/login", json = {
-        "username": "tenant@thingsboard.org",
-        "password": "tenant"
-    })
 
-    token = token_res.json()["token"]
-
-    device_resp = requests.get(f"http://192.168.1.226:2680/api/tenant/devices?deviceName={deviceName}", headers = {"Authorization": f"Bearer {token}"})
-
-    if device_resp.status_code == 200:
-        device = device_resp.json()
-        device_id = device["id"]["id"]
-        print(device_id)
-        return device_id
-    else:
-        return None
-    
-def syncSharedAttrUplink(deviceName, info_device, data):
-    token_res = requests.post("http://192.168.1.226:2680/api/auth/login", json = {
-        "username": "tenant@thingsboard.org",
-        "password": "tenant"
-    })
-
-    token = token_res.json()["token"]
-
-    device_resp = requests.post(f"http://192.168.1.226:2680/api/plugins/telemetry/DEVICE/{info_device[deviceName]['deviceID']}/SHARED_SCOPE", json = data, headers = {"Authorization": f"Bearer {token}"})
-    if device_resp.status_code == 200:
-        print("OK")
-
-def add_device_id(deviceName, info_device, converted_data):
-    device_id = get_device_id_by_name(deviceName)
-    while (device_id == None):
-        pass
-    info_device[deviceName]["deviceID"] = device_id
-    shared_attr_data = ""
-    for k in converted_data["attributes"]:
-        if info_device[deviceName]["shared_attributes"] in k:
-            shared_attr_data = k
-    syncSharedAttrUplink(deviceName, info_device, shared_attr_data)
-    print("THREAD TEST", info_device)
-
-class SocketConnector(Connector, Thread):
+class CustomTCPConnector(Connector, Thread):
     def __init__(self, gateway, config, connector_type):
         super().__init__()
         self.__log = log
@@ -96,43 +48,44 @@ class SocketConnector(Connector, Thread):
         self.__stopped = False
         self._connected = False
         self.__bind = False
-        self.__socket_type = config['type'].upper()
+        self.__socket_type = "TCP"
         self.__socket_address = config['address']
         self.__socket_port = config['port']
         self.__socket_buff_size = config['bufferSize']
         self.__socket = socket.socket(socket.AF_INET, SOCKET_TYPE[self.__socket_type])
         self.__converting_requests = Queue(-1)
-        self.info_device = {}
 
-        self.__templates = self.__convert_templates_list()
+        self.__devices = self.__convert_devices_list()
         self.__connections = {}
 
-    def __convert_templates_list(self):
-        templates = self.__config.get('templates', [])
+    def __convert_devices_list(self):
+        devices = self.__config.get('devices', [])
 
-        converted_templates = {}
-        for template in templates:
-            address = template.get('address')
-            module = self.__load_converter(template)
+        converted_devices = {}
+        for device in devices:
+            address = device.get('address')
+            module = self.__load_converter(device)
             converter = module(
-                {'template': template['template']}) if module else None
-            template['converter'] = converter
+                {'deviceName': device['deviceName'],
+                 'deviceType': device.get('deviceType', 'default')}) if module else None
+            device['converter'] = converter
 
             # validate attributeRequests requestExpression
-            attr_requests = template.get('attributeRequests', [])
-            template['attributeRequests'] = self.__validate_attr_requests(attr_requests)
-            if len(template['attributeRequests']):
+            attr_requests = device.get('attributeRequests', [])
+            device['attributeRequests'] = self.__validate_attr_requests(attr_requests)
+            if len(device['attributeRequests']):
                 self.__attribute_type = {
                     'client': self.__gateway.tb_client.client.gw_request_client_attributes,
                     'shared': self.__gateway.tb_client.client.gw_request_shared_attributes
                 }
 
-            converted_templates[address] = template
+            converted_devices[address] = device
 
-        return converted_templates
+        return converted_devices
 
-    def __load_converter(self, template):
-        converter_class_name = template.get('converter', DEFAULT_UPLINK_CONVERTER)
+    def __load_converter(self, device):
+        converter_class_name = "CustomTCPUplinkConverter"
+        print("__Load converter", converter_class_name)
         module = TBModuleLoader.import_module(self._connector_type, converter_class_name)
 
         if module:
@@ -233,26 +186,20 @@ class SocketConnector(Connector, Thread):
         self.__connections.pop(address)
         self.__log.debug('Connection %s closed', address)
 
-
     def __process_data(self):
         while not self.__stopped:
             if not self.__converting_requests.empty():
-                address_port, data = self.__converting_requests.get()
-                # converter_name = filter_converter(data)
+                (address, port), data = self.__converting_requests.get()
                 print("PROCESS")
-                print(address_port)
-                print(data)
-                imei = str(data).split(",")[2]
-                # print(self.__devices)
-                template = self.__templates.get('*:*', None)
-                # device["deviceName"] = device["deviceName"] + imei
-                # prNint("TEST PROCESS", self.info_device)
-                if not template:
-                    self.__log.error('Can\'t convert data from %s:%s - not in config file', address_port)
+                print(address, port)
+                print(self.__devices)
+                device = self.__devices.get('*:*', None)
+                if not device:
+                    self.__log.error('Can\'t convert data from %s:%s - not in config file', address, port)
 
                 # check data for attribute requests
                 is_attribute_request = False
-                attr_requests = template.get('attributeRequests', [])
+                attr_requests = device.get('attributeRequests', [])
                 if len(attr_requests):
                     for attr in attr_requests:
                         equal = data
@@ -266,53 +213,35 @@ class SocketConnector(Connector, Thread):
 
                         if attr['requestEqual'] == equal.decode('utf-8'):
                             is_attribute_request = True
-                            self.__process_attribute_request(template['deviceName'], attr, data)
+                            self.__process_attribute_request(device['deviceName'], attr, data)
 
                     if is_attribute_request:
                         continue
-                
-                # print("Process Data",device)
-                self.__convert_data(template, data, address_port)
+
+                self.__convert_data(device, data)
 
             sleep(.2)
 
-    def __convert_data(self, template, data, address_port):
-        # address, port = device['address'].split(':')
-        # # converter = device['converter']
-        converter = template['converter']
-        # if not converter:
-        #     self.__log.error('Converter not found for %s:%s', address, port)
+    def __convert_data(self, device, data):
+        address, port = device['address'].split(':')
+        converter = device['converter']
+        if not converter:
+            self.__log.error('Converter not found for %s:%s', address, port)
 
         try:
-
-            converted_data, converter_instance = converter.convert(data)
-            # print("TEST", converter_instance.device_info["manu_code"])
+            device_config = {
+                'encoding': device.get('encoding', 'utf-8').lower(),
+                'telemetry': device.get('telemetry', []),
+                'attributes': device.get('attributes', [])
+            }
+            converted_data = converter.convert(device_config, data)
 
             self.statistics['MessagesReceived'] = self.statistics['MessagesReceived'] + 1
-            shared_attr = ""
-            if converted_data is not None:
-                if converted_data["deviceName"] not in self.info_device:
-                    if (converted_data["deviceType"] == "lock"):
-                        shared_attr = "status"
-                    self.info_device[converted_data["deviceName"]] = {
-                        "address" : address_port[0],
-                        "port" : address_port[1],
-                        "converter" : converter_instance,
-                        "shared_attributes": shared_attr
-                    }
-                else:
-                    self.info_device[converted_data["deviceName"]]["address"] = address_port[0]
-                    self.info_device[converted_data["deviceName"]]["port"] = address_port[1]
-                    self.info_device[converted_data["deviceName"]]["converter"] = converter_instance
-                print(self.info_device)
-            # print("TEST", converted_data)
-            self.__gateway.send_to_storage(self.get_name(), converted_data)
-            self.statistics['MessagesSent'] = self.statistics['MessagesSent'] + 1
-            log.info('Data to ThingsBoard %s', converted_data)
-            # log.info("Data sent to ThingsBoard")
-            get_device_id_thread = Thread(target=add_device_id, args=(converted_data["deviceName"],self.info_device,converted_data))
-            get_device_id_thread.start()
 
+            if converted_data is not None:
+                self.__gateway.send_to_storage(self.get_name(), converted_data)
+                self.statistics['MessagesSent'] = self.statistics['MessagesSent'] + 1
+                log.info('Data to ThingsBoard %s', converted_data)
         except Exception as e:
             self.__log.exception(e)
 
@@ -372,16 +301,10 @@ class SocketConnector(Connector, Thread):
         return self.__config
 
     @CustomCollectStatistics(start_stat_type='allBytesSentToDevices')
-    def __write_value_via_tcp(self, address, port, value, converter):
+    def __write_value_via_tcp(self, address, port, value):
         try:
-            print("WRITE: ", self.__connections)
-            print("VALUE: ", value)
-            data_parsed = json.loads(value)
-            data_send = converter.converter_downlink(data_parsed)
-            # print("TEST:", data_send)
-            if (data_send != "Can't update attribute"):
-                self.__connections[(address, int(port))].sendall(data_send)
-            print("OK")
+            self.__connections[(address, int(port))].sendall(value)
+            return 'ok'
         except KeyError:
             try:
                 new_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -404,66 +327,41 @@ class SocketConnector(Connector, Thread):
     @StatisticsService.CollectAllReceivedBytesStatistics(start_stat_type='allReceivedBytesFromTB')
     def on_attributes_update(self, content):
         try:
-            print("ATT UPDATE")
-            print(content)
-            # device = tuple(filter(lambda item: item['deviceName'] == content['device'], self.__config['devices']))[0]
-            address =  self.info_device[content["device"]]["address"]
-            port = self.info_device[content["device"]]["port"]    
-            converter_instance = self.info_device[content["device"]]["converter"]
+            device = tuple(filter(lambda item: item['deviceName'] == content['device'], self.__config['devices']))[0]
 
-            # for attribute_update_config in device['attributeUpdates']:
-            #     for attribute_update in content['data']:
-            #         if attribute_update_config['attributeOnThingsBoard'] == attribute_update:
-            #             # address, port = device['address'].split(':')
-            #             encoding = device.get('encoding', 'utf-8').lower()
-            #             print(content["data"])
-            #             converted_data = bytes(str(content['data'][attribute_update]), encoding=encoding)
-            self.__write_value_via_tcp(address, port, json.dumps(content["data"]), converter_instance)
+            for attribute_update_config in device['attributeUpdates']:
+                for attribute_update in content['data']:
+                    if attribute_update_config['attributeOnThingsBoard'] == attribute_update:
+                        address, port = device['address'].split(':')
+                        encoding = device.get('encoding', 'utf-8').lower()
+                        converted_data = bytes(str(content['data'][attribute_update]), encoding=encoding)
+                        self.__write_value_via_tcp(address, port, converted_data)
         except IndexError:
             self.__log.error('Device not found')
 
     @StatisticsService.CollectAllReceivedBytesStatistics(start_stat_type='allReceivedBytesFromTB')
     def server_side_rpc_handler(self, content):
         try:
-            print("RPC Called")
-            # device = tuple(filter(lambda item: item['deviceName'] == content['device'], self.__config['devices']))[0]
-            device = None
+            device = tuple(filter(lambda item: item['deviceName'] == content['device'], self.__config['devices']))[0]
 
             # check if RPC method is reserved set
-            print("RPC: ", content)
             if content['data']['method'] == 'set':
                 params = {}
-                # for param in content['data']['params'].split(';'):
-                #     try:
-                #         (key, value) = param.split('=')
-                #     except ValueError:
-                #         continue
+                for param in content['data']['params'].split(';'):
+                    try:
+                        (key, value) = param.split('=')
+                    except ValueError:
+                        continue
 
-                #     if key and value:
-                #         params[key] = value
-                # (address, port), data = self.__converting_requests.get()
-                if (content["device"] in self.info_device):
-                    converter_instance = self.info_device[content["device"]]["converter"]
-                    address =  self.info_device[content["device"]]["address"]
-                    port = self.info_device[content["device"]]["port"]    
-                else:
-                    # deviceId = get_device_id_by_name(content["device"])
-                    device_id = get_device_id_by_name(content["device"])
-                    temp_key = ""
-                    for key, val in self.info_device.items():
-                        if (val["deviceID"] == device_id):
-                            temp_key = key
-                            address = val["address"]
-                            port = val["port"]
-                    self.info_device[content["device"]] = self.info_device[temp_key]
-                    del self.info_device[temp_key]
-                    
+                    if key and value:
+                        params[key] = value
+
                 result = None
                 try:
                     if self.__socket_type == 'TCP':
-                        result = self.__write_value_via_tcp(address, int(port), json.dumps(content["data"]["params"]).encode("utf-8"), converter_instance)
+                        result = self.__write_value_via_tcp(params['address'], int(params['port']), params['value'])
                     else:
-                        self.__write_value_via_udp(params['address'], int(params['port']), json.dumps(content["data"]["params"]).encode("utf-8"))
+                        self.__write_value_via_udp(params['address'], int(params['port']), params['value'])
                 except KeyError:
                     self.__gateway.send_rpc_reply(content['device'], content['data']['id'], 'Not enough params')
                 except ValueError:
@@ -471,29 +369,28 @@ class SocketConnector(Connector, Thread):
                                                   'Param "port" have to be int type')
                 else:
                     self.__gateway.send_rpc_reply(content['device'], content['data']['id'], str(result))
-            # else:
-            #     for rpc_config in device['serverSideRpc']:
-            #         for (key, value) in content['data'].items():
-            #             if value == rpc_config['methodRPC']:
-            #                 rpc_method = rpc_config['methodProcessing']
-            #                 return_result = rpc_config['withResponse']
-            #                 result = None
+            else:
+                for rpc_config in device['serverSideRpc']:
+                    for (key, value) in content['data'].items():
+                        if value == rpc_config['methodRPC']:
+                            rpc_method = rpc_config['methodProcessing']
+                            return_result = rpc_config['withResponse']
+                            result = None
 
-            #                 # address, port = device['address'].split(':')
-            #                 (address, port), data = self.__converting_requests.get()
-            #                 encoding = device.get('encoding', 'utf-8').lower()
-            #                 converted_data = bytes(str(content['data']['params']), encoding=encoding)
+                            address, port = device['address'].split(':')
+                            encoding = device.get('encoding', 'utf-8').lower()
+                            converted_data = bytes(str(content['data']['params']), encoding=encoding)
 
-            #                 if rpc_method.upper() == 'WRITE':
-            #                     if self.__socket_type == 'TCP':
-            #                         result = self.__write_value_via_tcp(address, port, converted_data)
-            #                     else:
-            #                         self.__write_value_via_udp(address, port, converted_data)
+                            if rpc_method.upper() == 'WRITE':
+                                if self.__socket_type == 'TCP':
+                                    result = self.__write_value_via_tcp(address, port, converted_data)
+                                else:
+                                    self.__write_value_via_udp(address, port, converted_data)
 
-            #                 if return_result and self.__socket_type == 'TCP':
-            #                     self.__gateway.send_rpc_reply(content['device'], content['data']['id'], str(result))
+                            if return_result and self.__socket_type == 'TCP':
+                                self.__gateway.send_rpc_reply(content['device'], content['data']['id'], str(result))
 
-            #                 return
+                            return
         except IndexError:
             self.__log.error('Device not found')
         except Exception as e:

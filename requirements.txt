@@ -3,7 +3,7 @@ regex
 pip
 PyYAML
 simplejson
-requests>=2.31.0
+requests
 PyInquirer
 pyfiglet
 termcolor
@@ -12,3 +12,4 @@ protobuf<=3.20.0
 cachetools
 cryptography==3.4.8
 tb-mqtt-client>=1.5
+pymmh3

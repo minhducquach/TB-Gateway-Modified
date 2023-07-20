@@ -1,5 +1,5 @@
 thingsboard:
-  host: thingsboard.cloud
+  host: 192.168.1.226
   port: 1883
   remoteShell: false
   remoteConfiguration: false
@@ -20,7 +20,7 @@ thingsboard:
     inactivityTimeoutSeconds: 120
     inactivityCheckPeriodSeconds: 10
   security:
-    accessToken: PUT_YOUR_GW_ACCESS_TOKEN_HERE
+    accessToken: 11111111
   qos: 1
 storage:
   type: memory
@@ -45,16 +45,27 @@ grpc:
   minTimeBetweenPingsMs: 10000
   minPingIntervalWithoutDataMs: 5000
 connectors:
-  -
-    name: MQTT Broker Connector
-    type: mqtt
-    configuration: mqtt.json
+#  -  
+#    name: MQTT Broker Connector
+#    type: mqtt
+#    configuration: mqtt.json
+ 
+ -
+   name: Socket TCP/UDP Connector
+   type: socket
+   configuration: socket.json
 
+#  -
+#    name: Custom TCP Connector
+#    type: custom_tcp
+#    configuration: custom_tcp.json
+#    class: CustomTCPConnector
+   
 #  -
 #    name: Modbus Connector
 #    type: modbus
 #    configuration: modbus.json
-#
+# 
 #  -
 #    name: Modbus Connector
 #    type: modbus
@@ -109,11 +120,6 @@ connectors:
 #    name: FTP Connector
 #    type: ftp
 #    configuration: ftp.json
-#
-#  -
-#    name: Socket TCP/UDP Connector
-#    type: socket
-#    configuration: socket.json
 #
 #  -
 #    name: XMPP Connector

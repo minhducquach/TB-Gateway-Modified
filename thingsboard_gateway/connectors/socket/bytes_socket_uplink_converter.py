@@ -15,53 +15,26 @@
 from thingsboard_gateway.connectors.socket.socket_uplink_converter import SocketUplinkConverter, log
 from thingsboard_gateway.gateway.statistics_service import StatisticsService
 
+from thingsboard_gateway.connectors.socket.device_utils.omni_lock import OMNI_LOCK
+
+import json
 
 class BytesSocketUplinkConverter(SocketUplinkConverter):
     def __init__(self, config):
         self.__config = config
-        dict_result = {
-            "deviceName": config['deviceName'],
-            "deviceType": config['deviceType']
-        }
+        self.device_info = {}
+        self.format_str = {}
 
     @StatisticsService.CollectStatistics(start_stat_type='receivedBytesFromDevices',
                                          end_stat_type='convertedBytesFromDevice')
-    def convert(self, config, data):
-        if data is None:
-            return {}
+    def convert(self, data):
+        dict_result = {}
+        converter = None
+        converter_name = self.filter_converter(data)
+        if (converter_name == "OMNI_LOCK"):
+            converter = OMNI_LOCK()
+            dict_result = converter.convert(data)
+        return dict_result, converter
 
-        dict_result = {
-            "deviceName": self.__config['deviceName'],
-            "deviceType": self.__config['deviceType']
-        }
-
-        try:
-            dict_result["telemetry"] = []
-            dict_result["attributes"] = []
-
-            for section in ('telemetry', 'attributes'):
-                for item in config[section]:
-                    try:
-                        byte_from = item.get('byteFrom')
-                        byte_to = item.get('byteTo')
-
-                        byte_to = byte_to if byte_to != -1 else len(data)
-                        converted_data = data[byte_from:byte_to]
-
-                        try:
-                            converted_data = converted_data.replace(b"\x00", b'').decode(config['encoding'])
-                        except UnicodeDecodeError:
-                            converted_data = str(converted_data)
-
-                        if item.get('key') is not None:
-                            dict_result[section].append(
-                                {item['key']: converted_data})
-                        else:
-                            log.error('Key for %s not found in config: %s', config['type'], config['section_config'])
-                    except Exception as e:
-                        log.exception(e)
-        except Exception as e:
-            log.exception(e)
-
-        log.debug(dict_result)
-        return dict_result
+    def filter_converter(self, data): # Return converter name of device
+        return "OMNI_LOCK"
